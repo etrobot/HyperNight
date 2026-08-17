@@ -1,0 +1,45 @@
+{
+  "name": "hypernight",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Hyperliquid HIP-3 off-hours cross-sectional multi-factor research, backtest and paper trading",
+  "engines": {
+    "node": ">=23.4"
+  },
+  "scripts": {
+    "dev": "concurrently -k -n API,WEB -c cyan,magenta \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:api": "node --watch --import tsx src/server.ts",
+    "dev:web": "vite --config vite.config.ts",
+    "web": "npm run build:web && node --import tsx src/server.ts",
+    "cli": "node --import tsx src/cli.ts",
+    "build:web": "vite build --config vite.config.ts",
+    "build:api": "tsc -p tsconfig.json",
+    "build": "npm run build:web && npm run build:api",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.web.json",
+    "test": "npm run build:web && node --import tsx --test test/*.test.ts && npm run typecheck",
+    "data:backfill": "node --import tsx src/cli.ts data:backfill",
+    "research": "node --import tsx src/cli.ts research",
+    "backtest": "node --import tsx src/cli.ts backtest",
+    "optimize": "node --import tsx src/cli.ts optimize",
+    "paper:init": "node --import tsx src/cli.ts paper:init",
+    "paper:tick": "node --import tsx src/cli.ts paper:tick",
+    "paper:status": "node --import tsx src/cli.ts paper:status",
+    "start": "npm run build:web && node --import tsx src/server.ts"
+  },
+  "dependencies": {
+    "nodejs-polars": "^0.25.2",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.5",
+    "concurrently": "^10.0.4",
+    "tsx": "^4.23.5",
+    "typescript": "^5.9.3",
+    "vite": "^8.2.0"
+  }
+}

@@ -1,0 +1,37 @@
+@import "../../web/styles.css";
+
+#root { min-height: 100vh; }
+.full-width { width: 100%; }
+.selection-actions { margin-top: 10px; }
+.config-error { margin-top: 8px; padding: 9px 11px; border: 1px solid rgba(255,124,121,.28); border-radius: 7px; background: rgba(255,124,121,.06); color: var(--red); font-size: 10px; }
+.sidebar-scrim { padding: 0; border: 0; }
+
+.backtest-page > .panel { flex-basis: 184px; }
+.backtest-control-layout { display: grid; min-height: 0; grid-template-columns: minmax(0, 1.35fr) minmax(300px, .65fr); gap: 10px; }
+.optimization-summary { min-height: 0; padding: 9px 10px; border: 1px solid var(--line); border-radius: 7px; background: rgba(5, 11, 9, .34); overflow: auto; }
+.optimization-summary-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--dim); font: 7px var(--mono); }
+.optimization-summary-head strong { color: var(--lime); font-size: 8px; letter-spacing: .05em; }
+.optimization-kpis { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-top: 8px; }
+.optimization-kpis > div { padding: 6px 7px; border: 1px solid var(--line); border-radius: 5px; background: rgba(12, 24, 20, .7); }
+.optimization-kpis small { display: block; color: var(--dim); font: 7px var(--mono); }
+.optimization-kpis strong { display: block; margin-top: 3px; color: var(--text); font: 12px var(--mono); }
+.optimization-config { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 7px; }
+.optimization-config span { padding: 3px 5px; border-radius: 4px; background: rgba(216,255,107,.06); color: var(--body); font: 7px var(--mono); }
+.optimization-dataset { display: block; overflow: hidden; margin-top: 6px; color: var(--dim); font: 7px var(--mono); white-space: nowrap; text-overflow: ellipsis; }
+.optimization-summary .empty-state { min-height: 108px; padding: 8px; }
+
+.boot-screen { display: grid; min-height: 100vh; place-items: center; padding: 24px; background: radial-gradient(circle at 50% 0, rgba(91,230,196,.08), transparent 32%), var(--bg); }
+.boot-card { width: min(440px, 100%); padding: 36px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); box-shadow: var(--shadow); text-align: center; }
+.boot-card .brand-mark { margin: 0 auto 22px; }
+.boot-card h1 { margin: 10px 0 6px; color: var(--text); font-size: 22px; }
+.boot-card p { margin: 0 auto 20px; color: var(--muted); font-size: 11px; }
+
+@media (max-width: 560px) {
+  .boot-card { padding: 28px 20px; }
+  .selection-actions { flex-wrap: wrap; }
+}
+
+@media (max-width: 820px) {
+  .backtest-control-layout { grid-template-columns: 1fr; }
+  .backtest-page > .panel { min-height: 360px; }
+}
