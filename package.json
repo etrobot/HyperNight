@@ -19,6 +19,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.web.json",
     "test": "npm run build:web && node --import tsx --test test/*.test.ts && npm run typecheck",
     "data:backfill": "node --import tsx src/cli.ts data:backfill",
+    "data:import-archive": "node --import tsx src/cli.ts data:import-archive",
     "research": "node --import tsx src/cli.ts research",
     "backtest": "node --import tsx src/cli.ts backtest",
     "optimize": "node --import tsx src/cli.ts optimize",

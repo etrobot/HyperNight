@@ -90,6 +90,19 @@ npm run data:backfill -- --symbols AAPL,MSFT,NVDA --days 10
 
 默认数据库是 `./data/hypernight.db`。Hyperliquid 官方 5m candleSnapshot 仅保留最近约 5000 根，回补会自动遵守该上限；持续运行可在本地积累更长历史。
 
+### HyperArbitrary 历史归档
+
+HyperArbitrary 配置的公开 `hyperliquid_download-data.7z` 同时包含 HIP-3 futures 的历史 5m Feather。HyperNight 可直接读取 7z、已提取目录或单个 Feather，并把 31 个策略标的导入本地 SQLite：
+
+```bash
+curl -fL -C - -o ./data/hyperliquid_download-data.7z \
+  https://frequenthippo.ddns.net/wp-content/uploads/hyperliquid_download-data.7z
+npm run data:import-archive -- --input ./data/hyperliquid_download-data.7z --dry-run
+npm run data:import-archive -- --input ./data/hyperliquid_download-data.7z
+```
+
+7z 输入默认只提取 `data/hyperliquid/futures/XYZ-*_USDC_USDC-5m-futures.feather` 中属于 HyperNight 的文件，并缓存到 `data/hyperliquid-market-archive/`。导入 source 为 `hyperarbitrary-archive-5m`；默认只补不存在的 `(symbol, timestamp)`，保留现有 Hyperliquid API 重叠记录并报告 OHLCV 差异。只有明确传入 `--overwrite-existing` 才会覆盖已有时间点。重复运行不会增加重复行。
+
 ## 研究与回测
 
 ```bash

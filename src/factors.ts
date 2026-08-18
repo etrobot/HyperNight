@@ -72,8 +72,12 @@ function finiteNumber(value: unknown, fallback = 0): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-function eligibilityReason(record: Record<string, unknown>, config: StrategyConfig): FactorEligibilityReason {
-  if (record.sessionReason === 'insufficient_coverage') return 'insufficient_coverage';
+function eligibilityReason(
+  record: Record<string, unknown>,
+  config: StrategyConfig,
+  retainInsufficientCoverage = record.sessionReason === 'insufficient_coverage'
+): FactorEligibilityReason {
+  if (retainInsufficientCoverage) return 'insufficient_coverage';
   const factorNames = RAW_FACTORS.map(([raw]) => raw);
   if (factorNames.some((name) => record[name] === null || record[name] === undefined || !Number.isFinite(Number(record[name])))) {
     return 'warmup';
@@ -87,6 +91,40 @@ function eligibilityReason(record: Record<string, unknown>, config: StrategyConf
   if (finiteNumber(record.estimatedNotionalVolume) < config.minBarNotional) return 'bar_too_thin';
   if (finiteNumber(record.score) < config.minScore) return 'score_below_minimum';
   return 'eligible';
+}
+
+function assignRanks(rows: FactorRow[]): void {
+  for (const row of rows) row.rank = 0;
+  let start = 0;
+  while (start < rows.length) {
+    let end = start + 1;
+    while (end < rows.length && rows[end]!.timestamp === rows[start]!.timestamp) end += 1;
+    const eligible = rows.slice(start, end)
+      .filter((row) => row.eligible)
+      .sort((left, right) => right.score - left.score || left.symbol.localeCompare(right.symbol));
+    for (let index = 0; index < eligible.length; index += 1) eligible[index]!.rank = index + 1;
+    start = end;
+  }
+}
+
+/**
+ * 优化器的默认搜索轴不会改变滚动因子或截面 z-score；entry/exit/cost 只会
+ * 改变准入门槛。复用同一份因子行并轻量重分类，避免每个 trial 重跑 Polars。
+ */
+export function reclassifyFactorRows(rows: FactorRow[], config: StrategyConfig): void {
+  const roundTripCost = 2 * (config.feeRate + config.slippageBps / 10_000);
+  for (const row of rows) {
+    const retainInsufficientCoverage = row.eligibilityReason === 'insufficient_coverage';
+    row.deviationFactor = Math.abs(row.deviation) - config.exitDeviation - roundTripCost;
+    const reason = eligibilityReason(
+      row as unknown as Record<string, unknown>,
+      config,
+      retainInsufficientCoverage
+    );
+    row.eligibilityReason = reason;
+    row.eligible = reason === 'eligible';
+  }
+  assignRanks(rows);
 }
 
 function addCrossSectionalZScores(frame: pl.DataFrame): pl.DataFrame {
@@ -270,50 +308,41 @@ export function buildFactorRows(input: BuildFactorRowsInput): FactorBuildResult 
       .alias('score')
   );
 
-  const eligibleRecords = standardized.toRecords().map((record) => {
+  const rows = standardized.toRecords().map((record): FactorRow => {
     const reason = eligibilityReason(record, input.config);
-    return { ...record, eligibilityReason: reason, eligible: reason === 'eligible' };
+    return {
+      symbol: String(record.symbol),
+      ticker: String(record.ticker),
+      sessionDate: String(record.sessionDate),
+      nextTradeDate: String(record.nextTradeDate),
+      windowStart: finiteNumber(record.windowStart),
+      windowEnd: finiteNumber(record.windowEnd),
+      timestamp: finiteNumber(record.timestamp),
+      isSessionLast: Boolean(record.isSessionLast),
+      close: finiteNumber(record.close),
+      referencePrice: finiteNumber(record.referencePrice),
+      deviation: finiteNumber(record.deviation),
+      direction: finiteNumber(record.direction) >= 0 ? 1 : -1,
+      fundingRate: finiteNumber(record.fundingRate),
+      fundingKnown: Boolean(record.fundingKnown),
+      estimatedNotionalVolume: finiteNumber(record.estimatedNotionalVolume),
+      deviationFactor: finiteNumber(record.deviationFactor),
+      momentumFactor: finiteNumber(record.momentumFactor, Number.NaN),
+      liquidityFactor: finiteNumber(record.liquidityFactor, Number.NaN),
+      lowVolatilityFactor: finiteNumber(record.lowVolatilityFactor, Number.NaN),
+      fundingCarryFactor: finiteNumber(record.fundingCarryFactor),
+      deviationZ: finiteNumber(record.deviationZ),
+      momentumZ: finiteNumber(record.momentumZ),
+      liquidityZ: finiteNumber(record.liquidityZ),
+      lowVolatilityZ: finiteNumber(record.lowVolatilityZ),
+      fundingCarryZ: finiteNumber(record.fundingCarryZ),
+      score: finiteNumber(record.score),
+      rank: 0,
+      eligible: reason === 'eligible',
+      eligibilityReason: reason
+    };
   });
-  const ranked = pl.DataFrame(eligibleRecords).withColumn(
-    pl.when(pl.col('eligible'))
-      .then(pl.col('score'))
-      .otherwise(pl.lit(null))
-      .rank('ordinal', true)
-      .over('timestamp')
-      .alias('rank')
-  );
-
-  const rows = ranked.toRecords().map((record): FactorRow => ({
-    symbol: String(record.symbol),
-    ticker: String(record.ticker),
-    sessionDate: String(record.sessionDate),
-    nextTradeDate: String(record.nextTradeDate),
-    windowStart: finiteNumber(record.windowStart),
-    windowEnd: finiteNumber(record.windowEnd),
-    timestamp: finiteNumber(record.timestamp),
-    isSessionLast: Boolean(record.isSessionLast),
-    close: finiteNumber(record.close),
-    referencePrice: finiteNumber(record.referencePrice),
-    deviation: finiteNumber(record.deviation),
-    direction: finiteNumber(record.direction) >= 0 ? 1 : -1,
-    fundingRate: finiteNumber(record.fundingRate),
-    fundingKnown: Boolean(record.fundingKnown),
-    estimatedNotionalVolume: finiteNumber(record.estimatedNotionalVolume),
-    deviationFactor: finiteNumber(record.deviationFactor),
-    momentumFactor: finiteNumber(record.momentumFactor, Number.NaN),
-    liquidityFactor: finiteNumber(record.liquidityFactor, Number.NaN),
-    lowVolatilityFactor: finiteNumber(record.lowVolatilityFactor, Number.NaN),
-    fundingCarryFactor: finiteNumber(record.fundingCarryFactor),
-    deviationZ: finiteNumber(record.deviationZ),
-    momentumZ: finiteNumber(record.momentumZ),
-    liquidityZ: finiteNumber(record.liquidityZ),
-    lowVolatilityZ: finiteNumber(record.lowVolatilityZ),
-    fundingCarryZ: finiteNumber(record.fundingCarryZ),
-    score: finiteNumber(record.score),
-    rank: finiteNumber(record.rank),
-    eligible: Boolean(record.eligible),
-    eligibilityReason: String(record.eligibilityReason) as FactorEligibilityReason
-  }));
   rows.sort((a, b) => a.timestamp - b.timestamp || a.symbol.localeCompare(b.symbol));
+  assignRanks(rows);
   return { rows, audits, startTime, endTime, warnings };
 }

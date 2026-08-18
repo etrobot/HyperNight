@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { loadEnvFile } from 'node:process';
 
+import { importArchiveCandles } from './archive-import.js';
 import { runBacktest } from './backtest.js';
 import { resolveConfig } from './config.js';
 import { DEFAULT_DB_PATH, normalizeSymbols } from './constants.js';
@@ -91,6 +92,7 @@ function help(): void {
   process.stdout.write(`HyperNight — HIP-3 休市截面多因子研究、回测与模拟交易\n\n`);
   process.stdout.write(`命令：\n`);
   process.stdout.write(`  data:backfill  [--db PATH] [--symbols AAPL,MSFT] [--days 17]\n`);
+  process.stdout.write(`  data:import-archive [--db PATH] [--input PATH] [--extract PATH] [--symbols AAPL,MSFT] [--dry-run] [--overwrite-existing]\n`);
   process.stdout.write(`  research       [--db PATH] [--config config.json] [--start ISO] [--end ISO]\n`);
   process.stdout.write(`  backtest       [--db PATH] [--config config.json] [--start ISO] [--end ISO]\n`);
   process.stdout.write(`  optimize       [--db PATH] [--config config.json] [--start ISO] [--end ISO] [--trials 60] [--folds 3]\n`);
@@ -120,6 +122,22 @@ async function main(): Promise<void> {
       print(await service.backfill({
         ...(symbols === undefined ? {} : { symbols }),
         ...(days === undefined ? {} : { days })
+      }));
+      return;
+    }
+    if (parsed.command === 'data:import-archive') {
+      const inputPath = textFlag(parsed.flags, 'input') ?? './data/hyperliquid_download-data.7z';
+      const extractionPath = textFlag(parsed.flags, 'extract');
+      const chunkSize = integerFlag(parsed.flags, 'chunk-size');
+      print(importArchiveCandles(database, {
+        inputPath,
+        ...(extractionPath === undefined ? {} : { extractionPath }),
+        ...(symbols === undefined ? {} : { symbols }),
+        ...(endTime === undefined ? {} : { cutoff: endTime }),
+        ...(chunkSize === undefined ? {} : { chunkSize }),
+        dryRun: parsed.flags.has('dry-run'),
+        overwriteExisting: parsed.flags.has('overwrite-existing'),
+        strictUnknown: parsed.flags.has('strict-unknown')
       }));
       return;
     }

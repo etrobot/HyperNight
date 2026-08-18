@@ -3,6 +3,8 @@ dist/
 data/*.db
 data/*.db-shm
 data/*.db-wal
+data/*.7z
+data/hyperliquid-market-archive/
 reports/
 .env
 .DS_Store

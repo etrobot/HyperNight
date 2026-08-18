@@ -9,6 +9,7 @@ import {
   normalizeSymbols
 } from './constants.js';
 import type { HyperNightDb } from './db.js';
+import { reclassifyFactorRows } from './factors.js';
 import { loadFactorData } from './analysis-data.js';
 import { computePerformanceMetrics } from './simulator.js';
 import type {
@@ -164,40 +165,31 @@ function splitWindows(windows: SessionWindow[], requestedFolds: number): SplitWi
   return { validation, test: windows.slice(development.length) };
 }
 
-function factorCacheKey(config: StrategyConfig): string {
-  return JSON.stringify({
-    windowStartEt: config.windowStartEt,
-    windowEndEt: config.windowEndEt,
-    referenceMode: config.referenceMode,
-    entryDeviation: config.entryDeviation,
-    exitDeviation: config.exitDeviation,
-    minScore: config.minScore,
-    momentumBars: config.momentumBars,
-    volatilityBars: config.volatilityBars,
-    liquidityBars: config.liquidityBars,
-    factorWeights: config.factorWeights,
-    maxFunding: config.maxFunding,
-    minBarNotional: config.minBarNotional,
-    minExpectedEdge: config.minExpectedEdge,
-    feeRate: config.feeRate,
-    slippageBps: config.slippageBps,
-    referenceMismatchLimit: config.referenceMismatchLimit,
-    minSessionCoverage: config.minSessionCoverage
-  });
+function groupRowsBySession(factors: FactorBuildResult): Map<string, FactorBuildResult['rows']> {
+  const grouped = new Map<string, FactorBuildResult['rows']>();
+  for (const row of factors.rows) {
+    const rows = grouped.get(row.sessionDate) ?? [];
+    rows.push(row);
+    grouped.set(row.sessionDate, rows);
+  }
+  return grouped;
 }
 
-function rowsForWindows(factors: FactorBuildResult, windows: SessionWindow[]): FactorBuildResult['rows'] {
-  const selected = new Set(windows.map((window) => window.sessionDate));
-  return factors.rows.filter((row) => selected.has(row.sessionDate));
+function rowsForWindows(grouped: Map<string, FactorBuildResult['rows']>, windows: SessionWindow[]): FactorBuildResult['rows'] {
+  return windows.flatMap((window) => grouped.get(window.sessionDate) ?? []);
 }
 
 function emptyScore(): OptimizationScore {
   return { objective: -100, totalReturnPct: 0, sharpe: null, maxDrawdownPct: 0, tradeCount: 0, winRate: null };
 }
 
-function evaluate(factors: FactorBuildResult, config: StrategyConfig, windows: SessionWindow[]): OptimizationScore {
+function evaluate(
+  grouped: Map<string, FactorBuildResult['rows']>,
+  config: StrategyConfig,
+  windows: SessionWindow[]
+): OptimizationScore {
   if (!windows.length) return emptyScore();
-  const rows = rowsForWindows(factors, windows);
+  const rows = rowsForWindows(grouped, windows);
   if (!rows.length) return emptyScore();
   const simulation = simulatePortfolio(rows, config, true);
   const pnls = windows.map((window) => simulation.sessionPnls.get(window.sessionDate) ?? 0);
@@ -269,35 +261,20 @@ export function runParameterOptimization(database: HyperNightDb, options: Parame
   const runId = database.createRun('optimization', baseConfig);
 
   try {
-    // 每份全量因子结果都包含数万到十余万行对象。只保留最近两份，避免
-    // 标准/深度搜索把所有候选永久留在 V8 堆中。
-    const factorCache = new Map<string, FactorBuildResult>();
-    const factorCacheLimit = 2;
-    const factorsFor = (config: StrategyConfig): FactorBuildResult => {
-      const key = factorCacheKey(config);
-      const cached = factorCache.get(key);
-      if (cached) {
-        factorCache.delete(key);
-        factorCache.set(key, cached);
-        return cached;
-      }
-      const factors = loadFactorData(database, {
-        symbols,
-        config,
-        ...(options.startTime === undefined ? {} : { startTime: options.startTime }),
-        ...(options.endTime === undefined ? {} : { endTime: options.endTime })
-      });
-      while (factorCache.size >= factorCacheLimit) {
-        const oldest = factorCache.keys().next().value as string | undefined;
-        if (oldest === undefined) break;
-        factorCache.delete(oldest);
-      }
-      factorCache.set(key, factors);
-      return factors;
-    };
-
-    const baseFactors = factorsFor(baseConfig);
+    // 默认优化轴只改变准入、退出和仓位管理，不改变滚动因子及截面 z-score。
+    // 全量 Polars 因子只构建一次；每个 trial 原地重算资格和排名。
+    const baseFactors = loadFactorData(database, {
+      symbols,
+      config: baseConfig,
+      ...(options.startTime === undefined ? {} : { startTime: options.startTime }),
+      ...(options.endTime === undefined ? {} : { endTime: options.endTime })
+    });
     if (!baseFactors.rows.length) throw new Error('真实行情没有形成可用于参数优化的完整休市段');
+    const groupedRows = groupRowsBySession(baseFactors);
+    const factorsFor = (config: StrategyConfig): FactorBuildResult => {
+      reclassifyFactorRows(baseFactors.rows, config);
+      return baseFactors;
+    };
     const windows = sessionWindows(baseFactors);
     if (windows.length < 3) throw new Error(`参数优化至少需要 3 个完整休市段，当前只有 ${windows.length} 个`);
     const split = splitWindows(windows, foldsRequested);
@@ -311,8 +288,8 @@ export function runParameterOptimization(database: HyperNightDb, options: Parame
       const trialStartedAt = Date.now();
       const params = candidates[index]!;
       const config = applyParams(baseConfig, params, selectedAxes);
-      const factors = factorsFor(config);
-      const foldScores = split.validation.map((fold) => evaluate(factors, config, fold));
+      factorsFor(config);
+      const foldScores = split.validation.map((fold) => evaluate(groupedRows, config, fold));
       const score = aggregate(foldScores);
       const validation = foldScores.map((foldScore, foldIndex) => foldMetric(foldIndex, split.validation[foldIndex]!, foldScore));
       const trial: OptimizationTrial = {
@@ -330,21 +307,22 @@ export function runParameterOptimization(database: HyperNightDb, options: Parame
       }
     }
 
-    const bestFactors = factorsFor(bestConfig);
-    const testScore = split.test.length ? evaluate(bestFactors, bestConfig, split.test) : null;
+    factorsFor(bestConfig);
+    const testScore = split.test.length ? evaluate(groupedRows, bestConfig, split.test) : null;
     const sensitivity = selectedAxes.map((axis) => {
       const center = bestParams[axis.key] ?? clamp(axis, configValue(bestConfig, axis.key));
       const values = [...new Set([clamp(axis, center - axis.step), clamp(axis, center), clamp(axis, center + axis.step)])].sort((a, b) => a - b);
       const objectives = values.map((value) => {
         const config = applyParams(baseConfig, { ...bestParams, [axis.key]: value }, selectedAxes);
-        const factors = factorsFor(config);
-        return aggregate(split.validation.map((fold) => evaluate(factors, config, fold))).objective;
+        factorsFor(config);
+        return aggregate(split.validation.map((fold) => evaluate(groupedRows, config, fold))).objective;
       });
       return { key: axis.key, values, objectives, bestIndex: objectives.indexOf(Math.max(...objectives)) };
     });
     const costStress = costScenariosBps.map((additionalSlippageBps) => {
       const config = resolveConfig({ ...bestConfig, slippageBps: bestConfig.slippageBps + additionalSlippageBps });
-      const score = evaluate(factorsFor(config), config, split.test.length ? split.test : windows);
+      factorsFor(config);
+      const score = evaluate(groupedRows, config, split.test.length ? split.test : windows);
       return {
         additionalSlippageBps,
         totalSlippageBps: config.slippageBps,

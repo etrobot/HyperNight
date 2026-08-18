@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { BAR_MS } from '../src/constants.js';
-import { buildFactorRows } from '../src/factors.js';
+import { buildFactorRows, reclassifyFactorRows } from '../src/factors.js';
 import type { CandleBar, OffHoursWindow, StockDailyBar } from '../src/types.js';
 import { testConfig } from './helpers.js';
 
@@ -81,6 +81,40 @@ test('Polars 生成滚动因子、截面 z-score、综合分与唯一排名', ()
   for (const ranks of eligibleByTime.values()) {
     assert.equal(new Set(ranks).size, ranks.length);
     assert.equal(Math.min(...ranks), 1);
+  }
+});
+
+test('优化器快速重分类与按目标配置完整重建产生相同资格和排名', () => {
+  const data = fixture(20);
+  const baseConfig = testConfig();
+  const targetConfig = {
+    ...baseConfig,
+    entryDeviation: 0.03,
+    exitDeviation: 0.01,
+    slippageBps: 7
+  };
+  const input = {
+    symbols: SYMBOLS,
+    windows: [data.window],
+    candles: data.candles,
+    stockDaily: data.stockDaily,
+    funding: []
+  };
+  const fast = buildFactorRows({ ...input, config: baseConfig });
+  const rebuilt = buildFactorRows({ ...input, config: targetConfig });
+  reclassifyFactorRows(fast.rows, targetConfig);
+
+  assert.equal(fast.rows.length, rebuilt.rows.length);
+  for (let index = 0; index < fast.rows.length; index += 1) {
+    const actual = fast.rows[index]!;
+    const expected = rebuilt.rows[index]!;
+    assert.equal(actual.symbol, expected.symbol);
+    assert.equal(actual.timestamp, expected.timestamp);
+    assert.equal(actual.eligible, expected.eligible);
+    assert.equal(actual.eligibilityReason, expected.eligibilityReason);
+    assert.equal(actual.rank, expected.rank);
+    assert.ok(Math.abs(actual.score - expected.score) < 1e-9);
+    assert.ok(Math.abs(actual.deviationFactor - expected.deviationFactor) < 1e-12);
   }
 });
 
